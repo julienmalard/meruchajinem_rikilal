@@ -30,6 +30,8 @@ class Données(object):
             elif ext == 'csv':
                 soimême.données_pd = pd.read_csv(données)
 
+        soimême.données_pd = soimême.données_pd.loc[:, soimême.colonnes_var.keys()].dropna()
+
     def obtenir(soimême, variable: Union[str, Variable]):
         col_variable = next(c for c, v in soimême.colonnes_var.items() if str(variable) == str(v))
         return soimême.données_pd[col_variable]
