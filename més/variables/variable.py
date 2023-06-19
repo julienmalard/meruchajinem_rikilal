@@ -26,7 +26,7 @@ class Variable(object):
         mu = None
         for d in dépendances:
             a = pm.Normal(
-                name='rel_' + str(d) + '_envers_' + str(soimême.nom),
+                name=nom_coefficient_relation(d, soimême),
                 mu=0, sigma=100
             )
 
@@ -37,8 +37,15 @@ class Variable(object):
 
         return mu
 
+    def préparer_données(soimême, données: pd.Series):
+        return données
+
     def générer_variable_pm(soimême, dépendances: dict[str, Any], données: Optional[pd.Series]):
         raise NotImplementedError()
 
     def __str__(soimême):
         return soimême.nom
+
+
+def nom_coefficient_relation(indépendant: Variable, dépendant: Variable) -> str:
+    return 'rel_' + str(indépendant) + '_envers_' + str(dépendant)
