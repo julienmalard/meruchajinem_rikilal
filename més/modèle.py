@@ -1,16 +1,29 @@
 from __future__ import annotations
 
+import hashlib
 import os.path
-from typing import Union, Any
+from os import makedirs
+from typing import Union, Any, Optional, TypedDict
 
 import arviz as az
+import matplotlib.pyplot as plt
+import numpy as np
+import plotly.graph_objects as go
 import pymc as pm
 
 from .contexte import contexte
 from .données import Données
 from .variables import GroupeVars, Relation, Variable
+from .variables.variable import nom_coefficient_relation
 
 DOSSIER_RÉSULTATS = 'résultats'
+
+
+class Impacte(TypedDict):
+    cheminement: list[Variable]
+    nom: str
+    dist: np.ndarray
+    composantes: list[dict[str, Union[Variable, np.ndarray]]]
 
 
 class Modèle(object):
@@ -25,6 +38,11 @@ class Modèle(object):
         mod = ModèleCalibré(soimême, données)
         return mod
 
+    def empreinte_structure(soimême) -> str:
+        return hashlib.md5(
+            ";".join(f'{r.indépendante}->{r.dépendante}' for r in sorted(soimême.relations)).encode()
+        ).hexdigest()[:10]
+
     def __enter__(soimême):
         contexte.append(soimême)
 
@@ -37,10 +55,110 @@ class ModèleCalibré(object):
         soimême.modèle = modèle
         soimême.données = données
 
-    def impacte(soimême, dépendante: Union[GroupeVars, Variable], indépendante: Union[GroupeVars, Variable], ):
+    def impacte(
+            soimême,
+            dépendante: Union[GroupeVars, Variable],
+            indépendante: Union[GroupeVars, Variable]
+    ) -> list[Impacte]:
+        cheminements = soimême.cheminements(dépendante, indépendante)
+        trace = soimême.obtenir_calibration()
+
+        impactes: list[Impacte] = []
+        for ch in cheminements:
+            impacte = np.array(1.)
+            composantes = []
+            for i, v in enumerate(ch[1:]):
+                coefficient = nom_coefficient_relation(ch[i], v)
+                impacte_ch = trace.posterior[coefficient].values
+
+                impacte = impacte * impacte_ch
+                composantes.append({
+                    "dépendante": v,
+                    "indépendante": ch[i],
+                    "dist": impacte_ch
+                })
+            impactes.append(Impacte(
+                cheminement=ch,
+                nom=" -> ".join(str(v) for v in ch),
+                dist=impacte,
+                composantes=composantes
+            ))
+
+        return impactes
+
+    def dessiner_impacte(soimême):
+        trace = soimême.obtenir_calibration()
+
+        relations = soimême.modèle.relations
+        variables = list(set([
+            x for r in relations for x in [
+                soimême.résoudre_variable(r.dépendante),
+                soimême.résoudre_variable(r.indépendante)
+            ]
+        ]))
+        liens = {
+            "source": [],
+            "target": [],
+            "value": []
+        }
+        for r in relations:
+            var_r_indépendante = soimême.résoudre_variable(r.indépendante)
+            var_r_dépendante = soimême.résoudre_variable(r.dépendante)
+            coefficient = nom_coefficient_relation(var_r_indépendante, var_r_dépendante)
+            impacte = trace.posterior[coefficient].values
+            liens["source"].append(variables.index(var_r_indépendante))
+            liens["target"].append(variables.index(var_r_dépendante))
+            liens["value"].append(abs(impacte.mean()))
+
+        fig = go.Figure(data=[
+            go.Sankey(
+                node={
+                    "pad": 15,
+                    "thickness": 15,
+                    "line": dict(color="black", width=0.5),
+                    "label": [str(v) for v in variables]
+                },
+                link=liens
+            )
+        ])
+
+        fig.update_layout(title_text=soimême.modèle.nom)
+        fig.write_image(soimême.obtenir_fichier_graphiques(f"sankey.jpeg"))
+
+    def cheminements(
+            soimême, indépendante: Union[GroupeVars, Variable], dépendante: Union[GroupeVars, Variable]
+    ) -> list[list[Variable]]:
         var_dépendante = soimême.résoudre_variable(dépendante)
         var_indépendante = soimême.résoudre_variable(indépendante)
+        relations = soimême.modèle.relations
+
+        def chercher_cheminement(de: Variable, à: Variable, base: Optional[list[Variable]] = None):
+            cheminements: list[list[Variable]] = []
+            relations_de = [r for r in relations if soimême.résoudre_variable(r.indépendante) is de]
+            base = base or [de]
+            for r in relations_de:
+                dépendante_r = soimême.résoudre_variable(r.dépendante)
+                if dépendante_r is à:
+                    cheminements.append([*base, dépendante_r])
+                else:
+                    for ch in chercher_cheminement(de=dépendante_r, à=à, base=[*base, dépendante_r]):
+                        cheminements.append(ch)
+            return cheminements
+
+        return chercher_cheminement(var_indépendante, var_dépendante)
+
+    def dessiner_traces(soimême):
         trace = soimême.obtenir_calibration()
+
+        for v in trace.posterior:
+            az.plot_trace(trace, [v])
+            fig = plt.gcf()
+            fig.suptitle(f"Trace {soimême.données.nom}, {v}")
+
+            nom_fichier = os.path.join("traces", v)
+            fichier_figure = os.path.join(soimême.obtenir_fichier_graphiques(nom_fichier))
+            fig.savefig(fichier_figure)
+            plt.close(fig)
 
     def obtenir_calibration(soimême):
         fichier_calibs = soimême.obtenir_fichier_calibs()
@@ -54,10 +172,28 @@ class ModèleCalibré(object):
         with pm.Model():
             soimême.créer_modèle()
             trace = pm.sample()
+
+        dossier_calibs = os.path.dirname(fichier_calibs)
+        if not os.path.isdir(dossier_calibs):
+            makedirs(dossier_calibs)
+
         az.to_netcdf(trace, fichier_calibs)
 
     def obtenir_fichier_calibs(soimême):
-        return os.path.join(DOSSIER_RÉSULTATS, 'traces', soimême.modèle.nom, soimême.données.nom + 'ncdf')
+        empreinte_structure = soimême.modèle.empreinte_structure()
+        return os.path.join(DOSSIER_RÉSULTATS, 'calibs', soimême.modèle.nom + "_" + empreinte_structure,
+                            soimême.données.nom + '.ncdf')
+
+    def obtenir_fichier_graphiques(soimême, nom_fichier: str) -> str:
+        empreinte_structure = soimême.modèle.empreinte_structure()
+        fichier_graphique = os.path.join(
+            DOSSIER_RÉSULTATS, 'figures', soimême.modèle.nom + "_" + empreinte_structure, soimême.données.nom,
+            nom_fichier
+        )
+        dossier_graphique = os.path.dirname(fichier_graphique)
+        if not os.path.isdir(dossier_graphique):
+            os.makedirs(dossier_graphique)
+        return fichier_graphique
 
     def résoudre_variable(soimême, variable: Union[GroupeVars, Variable]) -> Variable:
         if isinstance(variable, Variable):
