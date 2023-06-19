@@ -23,7 +23,7 @@ class VariableÉchelle(Variable):
             name='divisions_' + soimême.nom, mu=np.arange(-1, n_catégories - 2), sigma=10, shape=n_catégories - 1,
             transform=pm.distributions.transforms.univariate_ordered
         )
-        return pm.OrderedLogistic(name=soimême.nom, cutpoints=divisions, eta=mu, observed=données)
+        return pm.OrderedLogistic(name=soimême.nom, cutpoints=divisions, eta=mu, observed=données, compute_p=False)
 
 
 class VariableBooléenne(VariableÉchelle):
