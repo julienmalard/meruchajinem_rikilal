@@ -101,14 +101,47 @@ class ModèleCalibré(object):
             "target": [],
             "value": []
         }
+
+        def trace_relation(de: Variable, à: Variable) -> np.ndarray:
+            var_de = soimême.résoudre_variable(de)
+            var_à = soimême.résoudre_variable(à)
+            coef = nom_coefficient_relation(var_de, var_à)
+            return trace.posterior[coef].values
+
+        def force_relation(de: Variable, à: Variable) -> float:
+            return abs(trace_relation(de, à).mean())
+
+        # Normaliser les impactes
+        facteurs = {}
+        while len(facteurs) < len(variables):
+            non_normalisées = [v for v in variables if str(v) not in facteurs]
+            prêtes = [
+                v for v in non_normalisées if not any(
+                    soimême.résoudre_variable(r.indépendante) is v and soimême.résoudre_variable(r.dépendante) in non_normalisées for r in relations
+                )
+            ]
+
+            for p in prêtes:
+                causes_de_p = [soimême.résoudre_variable(r.indépendante) for r in relations if soimême.résoudre_variable(r.dépendante) is p]
+                dépendantes_de_p = [soimême.résoudre_variable(r.dépendante) for r in relations if soimême.résoudre_variable(r.indépendante) is p]
+                taille_sortie_p = np.sum([
+                    force_relation(de=p, à=d) * facteurs[str(d)] for d in dépendantes_de_p
+                ]) or 1
+                taille_entrée_p = np.sum([
+                    force_relation(de=c, à=p) for c in causes_de_p
+                ]) or taille_sortie_p
+                facteur_p = taille_sortie_p / taille_entrée_p
+                facteurs[str(p)] = facteur_p
+
         for r in relations:
             var_r_indépendante = soimême.résoudre_variable(r.indépendante)
             var_r_dépendante = soimême.résoudre_variable(r.dépendante)
-            coefficient = nom_coefficient_relation(var_r_indépendante, var_r_dépendante)
-            impacte = trace.posterior[coefficient].values
+
             liens["source"].append(variables.index(var_r_indépendante))
             liens["target"].append(variables.index(var_r_dépendante))
-            liens["value"].append(abs(impacte.mean()))
+            liens["value"].append(
+                force_relation(var_r_indépendante, var_r_dépendante) * facteurs[str(var_r_dépendante)]
+            )
 
         fig = go.Figure(data=[
             go.Sankey(
