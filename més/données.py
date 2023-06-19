@@ -1,8 +1,9 @@
-from __future__ import annotations
-from typing import Optional, TYPE_CHECKING, Union
+from typing import Optional, Union
+
 import pandas as pd
-if TYPE_CHECKING:
-    from .variables import Variable
+import xarray as xr
+
+from .variables import Variable
 
 
 class Données(object):
@@ -32,9 +33,11 @@ class Données(object):
 
         soimême.données_pd = soimême.données_pd.loc[:, soimême.colonnes_var.keys()].dropna()
 
-    def obtenir(soimême, variable: Union[str, Variable]):
+    def obtenir(soimême, variable: Variable):
         col_variable = next(c for c, v in soimême.colonnes_var.items() if str(variable) == str(v))
-        return soimême.données_pd[col_variable]
+        données = soimême.données_pd[col_variable]
+        données = variable.préparer_données(données)
+        return données
 
     def __contains__(soimême, variable):
         return str(variable) in [str(v) for v in soimême.colonnes_var.values()]
