@@ -19,3 +19,9 @@ class GroupeVars(object):
     def __iter__(soimême):
         for v in soimême.variables:
             yield v
+
+    def __contains__(soimême, item):
+        return item in soimême.variables
+
+    def __str__(soimême):
+        return soimême.nom
