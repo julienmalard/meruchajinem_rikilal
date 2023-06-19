@@ -19,4 +19,4 @@ class VariableCatégorique(Variable):
         b = pm.Normal(
             name='b_' + soimême.nom, mu=0, sigma=100
         )
-        return pm.Normal(name=soimême.nom, mu=mu + b, sigma=ét, observed=données)
+        return pm.Categorical(name=soimême.nom, mu=mu + b, sigma=ét, observed=données)
