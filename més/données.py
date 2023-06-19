@@ -30,6 +30,10 @@ class Données(object):
                 soimême.données_pd = pd.read_stata(données)
             elif ext == 'csv':
                 soimême.données_pd = pd.read_csv(données)
+            elif ext == 'nc':
+                soimême.données_pd = xr.open_dataset(données).to_dataframe()
+            else:
+                raise ValueError(données)
 
         soimême.données_pd = soimême.données_pd.loc[:, soimême.colonnes_var.keys()].dropna()
 
