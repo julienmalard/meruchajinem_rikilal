@@ -10,10 +10,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import plotly.graph_objects as go
 import pymc as pm
+import xarray as xr
 
 from .contexte import contexte
 from .données import Données
-from .variables import GroupeVars, Relation, Variable
+from .variables import GroupeVars, Relation, Variable, VariableContinue
 from .variables.variable import nom_coefficient_relation
 
 DOSSIER_RÉSULTATS = 'résultats'
@@ -96,10 +97,36 @@ class ModèleCalibré(object):
                 soimême.résoudre_variable(r.indépendante)
             ]
         ]))
+        TRANSPARENTE = 'rgba(0,0,0, 0)'
+        r2 = {}
+        with pm.Model():
+            soimême.créer_modèle()
+            r = pm.sample_posterior_predictive(trace)
+            for v in variables:
+                if isinstance(v, VariableContinue):
+                    z = xr.broadcast(
+                        r["observed_data"][str(v)],
+                        r["posterior_predictive"].rename({f"{str(v)}_dim_2": f"{str(v)}_dim_0"})[str(v)]
+                    )
+                    y_obs = z[0]
+                    y_préd = z[1]
+                    r2[str(v)] = ((
+                                      ((y_obs - y_obs.mean(dim=f"{str(v)}_dim_0")) *
+                                       (y_préd - y_préd.mean(dim=f"{str(v)}_dim_0")))
+                                  ).sum(dim=f"{str(v)}_dim_0") / (
+                                          ((y_obs - y_obs.mean(dim=f"{str(v)}_dim_0")) ** 2).sum(
+                                              dim=f"{str(v)}_dim_0") * (
+                                                  (y_préd - y_préd.mean(dim=f"{str(v)}_dim_0")) ** 2).sum(
+                                      dim=f"{str(v)}_dim_0")
+                                  ) ** 0.5).mean().values
+                else:
+                    r2[str(v)] = 1.0  # Variables ingresos no tienen r^2
+
         liens = {
             "source": [],
             "target": [],
-            "value": []
+            "value": [],
+            "color": []
         }
 
         def trace_relation(de: Variable, à: Variable) -> np.ndarray:
@@ -111,19 +138,24 @@ class ModèleCalibré(object):
         def force_relation(de: Variable, à: Variable) -> float:
             return abs(trace_relation(de, à).mean())
 
+        étiquettes = [str(v) for v in variables]
+
         # Normaliser les impactes
         facteurs = {}
         while len(facteurs) < len(variables):
             non_normalisées = [v for v in variables if str(v) not in facteurs]
             prêtes = [
                 v for v in non_normalisées if not any(
-                    soimême.résoudre_variable(r.indépendante) is v and soimême.résoudre_variable(r.dépendante) in non_normalisées for r in relations
+                    soimême.résoudre_variable(r.indépendante) is v and soimême.résoudre_variable(
+                        r.dépendante) in non_normalisées for r in relations
                 )
             ]
 
             for p in prêtes:
-                causes_de_p = [soimême.résoudre_variable(r.indépendante) for r in relations if soimême.résoudre_variable(r.dépendante) is p]
-                dépendantes_de_p = [soimême.résoudre_variable(r.dépendante) for r in relations if soimême.résoudre_variable(r.indépendante) is p]
+                causes_de_p = [soimême.résoudre_variable(r.indépendante) for r in relations if
+                               soimême.résoudre_variable(r.dépendante) is p]
+                dépendantes_de_p = [soimême.résoudre_variable(r.dépendante) for r in relations if
+                                    soimême.résoudre_variable(r.indépendante) is p]
                 taille_sortie_p = np.sum([
                     force_relation(de=p, à=d) * facteurs[str(d)] for d in dépendantes_de_p
                 ]) or 1
@@ -131,32 +163,52 @@ class ModèleCalibré(object):
                     force_relation(de=c, à=p) for c in causes_de_p
                 ]) or taille_sortie_p
                 facteur_p = taille_sortie_p / taille_entrée_p
-                facteurs[str(p)] = facteur_p
+                facteurs[str(p)] = facteur_p * r2[str(p)]
+
+                if causes_de_p:
+                    étiquettes.append("")
+                    liens["source"].append(len(étiquettes) - 1)
+                    liens["target"].append(étiquettes.index(str(p)))
+                    liens["value"].append((1 - r2[str(p)]) * taille_sortie_p)
+                    liens["color"].append(TRANSPARENTE)
+
+        def générer_couleur(nom_variable: str, lien=False):
+            palette = [
+                (247, 92, 3),
+                (217, 3, 104),
+                (130, 2, 99),
+                (220, 247, 99),
+                (193, 247, 220),
+            ]
+            i_variable = [str(x) for x in variables].index(nom_variable) % len(palette)
+            return f"rgba({', '.join(str(x) for x in palette[i_variable])}, {0.2 if lien else 1})"
 
         for r in relations:
             var_r_indépendante = soimême.résoudre_variable(r.indépendante)
             var_r_dépendante = soimême.résoudre_variable(r.dépendante)
 
-            liens["source"].append(variables.index(var_r_indépendante))
-            liens["target"].append(variables.index(var_r_dépendante))
+            liens["source"].append(étiquettes.index(str(var_r_indépendante)))
+            liens["target"].append(étiquettes.index(str(var_r_dépendante)))
             liens["value"].append(
                 force_relation(var_r_indépendante, var_r_dépendante) * facteurs[str(var_r_dépendante)]
             )
+            liens["color"].append(générer_couleur(str(var_r_indépendante), lien=True))
 
         fig = go.Figure(data=[
             go.Sankey(
                 node={
                     "pad": 15,
                     "thickness": 15,
-                    "line": dict(color="black", width=0.5),
-                    "label": [str(v) for v in variables]
+                    "line": dict(color="black", width=0),
+                    "label": étiquettes,
+                    "color": [générer_couleur(x) if x else TRANSPARENTE for x in étiquettes]
                 },
                 link=liens
             )
         ])
 
         fig.update_layout(title_text=soimême.modèle.nom)
-        fig.write_image(soimême.obtenir_fichier_graphiques(f"sankey.jpeg"))
+        fig.write_image(soimême.obtenir_fichier_graphiques(f"sankey.jpeg"), scale=4)
 
     def cheminements(
             soimême, indépendante: Union[GroupeVars, Variable], dépendante: Union[GroupeVars, Variable]
@@ -244,8 +296,9 @@ class ModèleCalibré(object):
         while n_non_résolues > 0:
             prêtes = [v for v in variables if all(d.nom in résolues for d in soimême.dépendances(v))]
             for v in prêtes:
+                dépendances = {c: vl for c, vl in résolues.items() if c in [str(x) for x in soimême.dépendances(v)]}
                 résolues[v.nom] = v.générer_variable_pm(
-                    {c: vl for c, vl in résolues.items() if c in [str(x) for x in soimême.dépendances(v)]},
+                    dépendances,
                     soimême.données.obtenir(v)
                 )
                 variables.remove(v)
