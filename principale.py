@@ -3,13 +3,14 @@ import numpy as np
 from més.données import Données
 from més.modèle import Modèle
 from més.variables import VariableÉchelle, VariableBooléenne, VariableCatégorique, VariablePositive, GroupeVars
+from més.variables.continues import VariableBornée
 
 if __name__ == "__main__":
     isa = VariableÉchelle('isa', 4)
     malnutrition = VariableBooléenne('malnutrition')
     santé = GroupeVars('santé', isa, malnutrition)
 
-    brèche_pauvreté = VariablePositive('brèche pauvreté')
+    brèche_pauvreté = VariableBornée('brèche pauvreté')
     catégorie_richesse = VariableÉchelle('pauvreté', 5)
     pauvreté = GroupeVars('pauvreté', brèche_pauvreté, catégorie_richesse)
 
@@ -19,8 +20,15 @@ if __name__ == "__main__":
 
     langue_maternelle = VariableCatégorique('langue maternelle')
     parle_langue_dominante = VariableBooléenne('parle langue dominante')
+    parle_langue_dominante_fréquemment = VariableBooléenne('parle langue dominante fréquemment')
     langue_maternelle_dominante = VariableBooléenne('langue maternelle dominante')
-    langue = GroupeVars('langue', langue_maternelle, parle_langue_dominante, langue_maternelle_dominante)
+    langue = GroupeVars(
+        'langue',
+        langue_maternelle,
+        parle_langue_dominante_fréquemment,
+        parle_langue_dominante,
+        langue_maternelle_dominante
+    )
 
     indigène = VariableBooléenne('indigène')
     groupe_ethnique = VariableCatégorique('groupe ethnique')
@@ -46,6 +54,7 @@ if __name__ == "__main__":
         colonnes_var={
             'ISA': isa,
             'brecha.pobr.ingresos': brèche_pauvreté,
+            'leng.frec.cstlñ': parle_langue_dominante_fréquemment,
             'habla.cstlñ': parle_langue_dominante,
             'etnia.cstlñ': indigène,
             'jefa.mujer': genre,
